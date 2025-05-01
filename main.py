@@ -85,38 +85,32 @@ async def get_token(username: str, password: str) -> Optional[str]:
             return None
 
 # Auth dependency that supports both session tokens and authorization headers
-async def get_current_user(
-    request: Request,
-    authorization: Optional[str] = Header(None)
-) -> Optional[User]:
-    # First try to get token from header
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "")
-    
-    # If no token in header, try from session
+async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
+    # Get token from session
+    token = request.session.get("access_token")
+
+    # If no token in session, try from header
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")    
+
     if not token:
-        token = request.session.get("access_token")
-    
-    # If still no token, return None
-    if not token:
+        logger.info("No token found in session or header")
+        # Return None instead of raising an exception
         return None
     
-    # Verify the token with auth service
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
+    try:
+        # Get user info from auth service
+        async with httpx.AsyncClient(timeout=10.0) as client:
             headers = {"Authorization": f"Bearer {token}"}
             response = await client.get(f"{AUTH_URL}/me", headers=headers)
-            
             if response.status_code != 200:
-                logger.warning(f"Failed to verify token: {response.status_code} - {response.text}")
+                logger.warning(f"Failed to verify token: {response.status_code}")
                 return None
-            
             user_data = response.json()
             return User(**user_data)
-        except Exception as e:
-            logger.error(f"Error verifying token: {e}")
-            return None
+    except Exception as e:
+        logger.error(f"Error verifying user: {str(e)}")
+        return None
 
 # Admin access check
 async def check_admin_access(user: Optional[User] = Depends(get_current_user)):
@@ -144,9 +138,8 @@ async def fetch_all_objects(request: Request, authorization: Optional[str] = Hea
     
     # Get token from header or session
     token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "")
-    
+    if authorization and isinstance(authorization, str) and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")    
     if not token:
         token = request.session.get("access_token")
     
@@ -230,6 +223,53 @@ def handle_visualization_errors(func):
             plt.close()
             return StreamingResponse(buf, media_type="image/png")
     return wrapper
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, user: Optional[User] = Depends(get_current_user)):
+    if user:
+        return RedirectResponse(url="/analytics/dashboard")
+    
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/login")
+async def login(request: Request, email: str = Form(...), password: str = Form(...)):
+    # Call auth service to get token
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{AUTH_URL}/login",
+                data={"username": email, "password": password}
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"Auth service login error: {response.status_code} - {response.text}")
+                return templates.TemplateResponse(
+                    "login.html",
+                    {"request": request, "error": f"Login failed: {response.status_code} - {response.text}"}
+                )
+            
+            token_data = response.json()
+            logger.info(f"Got token with type: {type(token_data.get('access_token'))}")
+            
+            # Store token in session
+            request.session["access_token"] = token_data["access_token"]
+            logger.info(f"Stored token in session: {request.session.get('access_token') is not None}")
+            
+            return RedirectResponse(url="/analytics/dashboard", status_code=303)
+    except Exception as e:
+        logger.error(f"Exception during login: {str(e)}")
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "error": str(e)}
+        )
+
+@app.get("/logout")
+async def logout(request: Request):
+    # Remove token from session
+    request.session.pop("access_token", None)
+    
+    return RedirectResponse(url="/login")
 
 # 1. Histogram of accuracy and completeness across all objects
 @app.get("/analytics/histogram/ratings")
@@ -640,17 +680,26 @@ async def rating_disagreement(request: Request, admin_user: User = Depends(check
     # Return image
     return StreamingResponse(buf, media_type="image/png")
 
-# Dashboard HTML endpoint that displays all analytics
+# Update analytics dashboard to redirect to login if not authenticated
 @app.get("/analytics/dashboard", response_class=HTMLResponse)
-async def analytics_dashboard(request: Request, admin_user: User = Depends(check_admin_access)):
+async def analytics_dashboard(request: Request, user: Optional[User] = Depends(get_current_user)):
     """Dashboard displaying all analytics visualizations"""
+    if not user:
+        return RedirectResponse(url="/login")
+    
+    # For admin-only pages, check admin role
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
     
     # Render the dashboard template
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request, 
-            "user_email": admin_user.email,
+            "user_email": user.email,
             "title": "Analytics Dashboard - Objaverse Research Portal"
         }
     )
@@ -914,8 +963,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 # Main index route that redirects to the dashboard
 @app.get("/")
-async def root(request: Request):
-    """Redirect to dashboard page"""
+async def root(request: Request, user: Optional[User] = Depends(get_current_user)):
+    """Redirect to dashboard page if authenticated, otherwise to login"""
+    if not user:
+        return RedirectResponse(url="/login")
     return RedirectResponse(url="/analytics/dashboard")
 
 # Add a data endpoint to provide summary statistics
@@ -952,6 +1003,25 @@ async def analytics_data(request: Request, admin_user: User = Depends(check_admi
 async def health_check():
     """Health check endpoint"""
     return {"status": "ok", "service": "analytics"}
+
+@app.exception_handler(401)
+async def unauthorized_handler(request: Request, exc: HTTPException):
+    """Handle unauthorized access by redirecting to login"""
+    return RedirectResponse(url="/login", status_code=303)
+
+@app.exception_handler(403)
+async def forbidden_handler(request: Request, exc: HTTPException):
+    """Handle forbidden access"""
+    return templates.TemplateResponse(
+        "error.html",
+        {
+            "request": request,
+            "status_code": 403,
+            "status_message": "Forbidden",
+            "detail": "You don't have permission to access this resource"
+        },
+        status_code=403
+    )
 
 if __name__ == "__main__":
     import uvicorn

@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 # Digital Ocean App Platform automatically sets PORT
 # We'll use this as fallback for local development
-ENV PORT=${PORT:-3000}
+ENV PORT=${PORT:-8000}
 
 # Install system dependencies
 RUN apt-get update \

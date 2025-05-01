@@ -105,26 +105,5 @@ Build and run the service using Docker:
 docker build -t evaluation-analytics .
 
 # Run the container
-docker run -p 8000:8000 \
-  -e API_URL=http://your-api-service:8000 \
-  -e AUTH_URL=http://your-auth-service:8000 \
-  evaluation-analytics
-```
-
-### Using Docker Compose
-
-You can add this service to your docker-compose.yml file:
-
-```yaml
-services:
-  analytics:
-    build: ./analytics
-    ports:
-      - "8000:8000"
-    environment:
-      - API_URL=http://api:8000
-      - AUTH_URL=http://auth:8000
-    depends_on:
-      - api
-      - auth
+docker run -p 8000:8000 evaluation-analytics
 ```
