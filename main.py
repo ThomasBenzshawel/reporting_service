@@ -205,24 +205,43 @@ def create_plot(plt_func, filename, *args, **kwargs):
 
 # Error handling wrapper for visualization endpoints
 def handle_visualization_errors(func):
-    async def wrapper(*args, **kwargs):
+    async def wrapper(request: Request, *args, **kwargs):
         try:
-            return await func(*args, **kwargs)
-        except HTTPException:
-            # Pass through HTTP exceptions
-            raise
+            # Get admin user manually
+            token = request.session.get("access_token")
+            if not token:
+                # Return error image for unauthorized requests
+                return create_error_image("Authentication required")
+                
+            # Manually verify admin access
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                response = await client.get(f"{AUTH_URL}/me", headers=headers)
+                if response.status_code != 200:
+                    return create_error_image("Invalid authentication")
+                
+                user_data = response.json()
+                user = User(**user_data)
+                
+                if user.role != "admin":
+                    return create_error_image("Admin access required")
+                
+            # Call the original function with the admin user
+            return await func(request, admin_user=user, *args, **kwargs)
         except Exception as e:
             logger.error(f"Error generating visualization: {e}")
-            # Create an error image
-            plt.figure(figsize=(10, 6))
-            plt.text(0.5, 0.5, f"Error generating visualization: {str(e)}", 
-                    ha='center', va='center', transform=plt.gca().transAxes)
-            buf = BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-            return StreamingResponse(buf, media_type="image/png")
+            return create_error_image(f"Error: {str(e)}")
     return wrapper
+
+# Create a helper function for error images
+def create_error_image(error_text):
+    plt.figure(figsize=(10, 6))
+    plt.text(0.5, 0.5, error_text, ha='center', va='center', transform=plt.gca().transAxes)
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+    return StreamingResponse(buf, media_type="image/png")
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -271,105 +290,40 @@ async def logout(request: Request):
     
     return RedirectResponse(url="/login")
 
-# 1. Histogram of accuracy and completeness across all objects
-@app.get("/analytics/histogram/ratings")
-@handle_visualization_errors
-async def histogram_ratings(request: Request, admin_user: User = Depends(check_admin_access)):
-    """Generate histograms for accuracy and completeness ratings"""
-    
-    all_objects = await fetch_all_objects(request)
-    
-    # Extract accuracy and completeness ratings
-    accuracy_ratings = []
-    completeness_ratings = []
-    
-    for obj in all_objects:
-        avg_ratings = obj.get("averageRatings", {})
-        if "accuracy" in avg_ratings and avg_ratings["accuracy"] is not None:
-            accuracy_ratings.append(avg_ratings["accuracy"])
-        if "completeness" in avg_ratings and avg_ratings["completeness"] is not None:
-            completeness_ratings.append(avg_ratings["completeness"])
-    
-    # Handle empty data case
-    if not accuracy_ratings and not completeness_ratings:
-        plt.figure(figsize=(15, 6))
-        plt.text(0.5, 0.5, "No rating data available", ha='center', va='center', transform=plt.gca().transAxes)
-        plt.tight_layout()
-        buf = BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
-        return StreamingResponse(buf, media_type="image/png")
-    
-    # Create subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    
-    # Accuracy histogram
-    if accuracy_ratings:
-        ax1.hist(accuracy_ratings, bins=10, alpha=0.7, color='blue')
-        ax1.set_title('Distribution of Accuracy Ratings')
-        ax1.set_xlabel('Accuracy Rating')
-        ax1.set_ylabel('Count')
-    else:
-        ax1.text(0.5, 0.5, "No accuracy data available", ha='center', va='center', transform=ax1.transAxes)
-    
-    # Completeness histogram
-    if completeness_ratings:
-        ax2.hist(completeness_ratings, bins=10, alpha=0.7, color='green')
-        ax2.set_title('Distribution of Completeness Ratings')
-        ax2.set_xlabel('Completeness Rating')
-        ax2.set_ylabel('Count')
-    else:
-        ax2.text(0.5, 0.5, "No completeness data available", ha='center', va='center', transform=ax2.transAxes)
-    
-    plt.tight_layout()
-    
-    # Save plot to BytesIO object
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    
-    # Return image
-    return StreamingResponse(buf, media_type="image/png")
 
-# 2. Distribution of time spent evaluating
-@app.get("/analytics/distribution/time_spent")
-@handle_visualization_errors
-async def distribution_time_spent(request: Request, admin_user: User = Depends(check_admin_access)):
-    """Generate distribution of time spent on evaluations"""
+async def get_viz_admin_user(request: Request):
+    """Special authentication for visualization endpoints that bypasses dependency validation"""
+    # Get token from session
+    token = request.session.get("access_token")
     
-    all_objects = await fetch_all_objects(request)
+    if not token:
+        return None
     
-    # Extract time spent data
-    time_spent_values = []
-    
-    for obj in all_objects:
-        for rating in obj.get("ratings", []):
-            time_spent = rating.get("metrics", {}).get("time_spent_seconds")
-            if time_spent is not None:
-                time_spent_values.append(time_spent)
-    
-    # Create plot
+    try:
+        # Verify admin access
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {"Authorization": f"Bearer {token}"}
+            response = await client.get(f"{AUTH_URL}/me", headers=headers)
+            if response.status_code != 200:
+                logger.warning(f"Invalid token for visualization: {response.status_code}")
+                return None
+            
+            user_data = response.json()
+            user = User(**user_data)
+            
+            if user.role != "admin":
+                logger.warning(f"Non-admin user attempted to access visualization: {user.email}")
+                return None
+            
+            return user
+    except Exception as e:
+        logger.error(f"Error verifying user for visualization: {str(e)}")
+        return None
+
+def create_error_image(error_message):
+    """Create an error image with the specified message"""
     plt.figure(figsize=(10, 6))
-    
-    if time_spent_values:
-        plt.hist(time_spent_values, bins=20, alpha=0.7, color='purple')
-        plt.title('Distribution of Time Spent on Evaluations')
-        plt.xlabel('Time Spent (seconds)')
-        plt.ylabel('Count')
-        plt.grid(True, alpha=0.3)
-        
-        # Add statistics annotations
-        avg_time = np.mean(time_spent_values)
-        median_time = np.median(time_spent_values)
-        plt.axvline(avg_time, color='red', linestyle='dashed', linewidth=1)
-        plt.axvline(median_time, color='green', linestyle='dashed', linewidth=1)
-        plt.text(avg_time*1.05, plt.ylim()[1]*0.9, f'Mean: {avg_time:.1f}s', color='red')
-        plt.text(median_time*1.05, plt.ylim()[1]*0.8, f'Median: {median_time:.1f}s', color='green')
-    else:
-        plt.text(0.5, 0.5, "No time spent data available", ha='center', va='center', transform=plt.gca().transAxes)
-    
+    plt.text(0.5, 0.5, error_message, ha='center', va='center', transform=plt.gca().transAxes)
     plt.tight_layout()
     
     # Save plot to BytesIO object
@@ -378,307 +332,477 @@ async def distribution_time_spent(request: Request, admin_user: User = Depends(c
     buf.seek(0)
     plt.close()
     
-    # Return image
-    return StreamingResponse(buf, media_type="image/png")
+    return buf
 
-# 3. Unknown count across all objects
-@app.get("/analytics/unknown_count")
-@handle_visualization_errors
-async def unknown_count(request: Request, admin_user: User = Depends(check_admin_access)):
-    """Generate visualization of unknown counts across objects"""
+# 1. Updated histogram ratings endpoint
+@app.get("/analytics/histogram/ratings")
+async def histogram_ratings(request: Request):
+    """Generate histograms for accuracy and completeness ratings"""
+    # Get admin user manually without dependency
+    admin_user = await get_viz_admin_user(request)
     
-    all_objects = await fetch_all_objects(request)
+    if not admin_user:
+        # Return error image instead of raising an exception
+        error_buf = create_error_image("Authentication required")
+        return StreamingResponse(error_buf, media_type="image/png")
     
-    # Count objects with unknown markings
-    object_unknown_counts = {}
-    total_evaluations = 0
-    total_unknown = 0
-    
-    for obj in all_objects:
-        obj_id = obj.get("objectId", "unknown")
-        unknown_count = 0
-        eval_count = len(obj.get("ratings", []))
+    try:
+        # Original visualization code
+        all_objects = await fetch_all_objects(request)
         
-        for rating in obj.get("ratings", []):
-            if rating.get("metrics", {}).get("unknown_object", False):
-                unknown_count += 1
-                total_unknown += 1
-        
-        total_evaluations += eval_count
-        
-        if unknown_count > 0:
-            object_unknown_counts[obj_id] = {
-                "unknown_count": unknown_count,
-                "total_ratings": eval_count,
-                "percentage": (unknown_count / eval_count * 100) if eval_count > 0 else 0
-            }
-    
-    # Sort by unknown count
-    sorted_objects = sorted(
-        object_unknown_counts.items(),
-        key=lambda x: x[1]["unknown_count"],
-        reverse=True
-    )[:20]  # Top 20 objects
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    if sorted_objects:
-        objects = [item[0][-6:] + "..." for item in sorted_objects]  # Truncate long object IDs
-        unknown_counts = [item[1]["unknown_count"] for item in sorted_objects]
-        percentages = [item[1]["percentage"] for item in sorted_objects]
-        
-        # Bar chart for counts
-        bars = ax.bar(objects, unknown_counts, color='orangered')
-        ax.set_xlabel('Object ID (truncated)')
-        ax.set_ylabel('Number of Unknown Markings', color='orangered')
-        ax.tick_params(axis='y', labelcolor='orangered')
-        
-        # Add percentage labels
-        for i, bar in enumerate(bars):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                    f'{percentages[i]:.1f}%',
-                    ha='center', va='bottom', rotation=0, size=8)
-        
-        # Overall statistics
-        overall_percentage = (total_unknown / total_evaluations * 100) if total_evaluations > 0 else 0
-        plt.title(f'Objects with Most Unknown Markings\nTotal Unknown: {total_unknown} ({overall_percentage:.1f}% of all evaluations)')
-        plt.xticks(rotation=45, ha='right')
-    else:
-        plt.text(0.5, 0.5, "No unknown objects found", ha='center', va='center', transform=ax.transAxes)
-        plt.title('Unknown Objects Analysis')
-    
-    plt.tight_layout()
-    
-    # Save plot to BytesIO object
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    
-    # Return image
-    return StreamingResponse(buf, media_type="image/png")
-
-# 4. Hallucination count across all objects
-@app.get("/analytics/hallucination_count")
-@handle_visualization_errors
-async def hallucination_count(request: Request, admin_user: User = Depends(check_admin_access)):
-    """Generate visualization of hallucination counts across objects"""
-    
-    all_objects = await fetch_all_objects(request)
-    
-    # Count objects with hallucination markings
-    object_hallucination_counts = {}
-    total_evaluations = 0
-    total_hallucinations = 0
-    
-    for obj in all_objects:
-        obj_id = obj.get("objectId", "unknown")
-        hallucination_count = 0
-        eval_count = len(obj.get("ratings", []))
-        
-        for rating in obj.get("ratings", []):
-            if rating.get("metrics", {}).get("hallucinated", False):
-                hallucination_count += 1
-                total_hallucinations += 1
-        
-        total_evaluations += eval_count
-        
-        if hallucination_count > 0:
-            object_hallucination_counts[obj_id] = {
-                "hallucination_count": hallucination_count,
-                "total_ratings": eval_count,
-                "percentage": (hallucination_count / eval_count * 100) if eval_count > 0 else 0
-            }
-    
-    # Sort by hallucination count
-    sorted_objects = sorted(
-        object_hallucination_counts.items(),
-        key=lambda x: x[1]["hallucination_count"],
-        reverse=True
-    )[:20]  # Top 20 objects
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    if sorted_objects:
-        objects = [item[0][-6:] + "..." for item in sorted_objects]  # Truncate long object IDs
-        hallucination_counts = [item[1]["hallucination_count"] for item in sorted_objects]
-        percentages = [item[1]["percentage"] for item in sorted_objects]
-        
-        # Bar chart for counts
-        bars = ax.bar(objects, hallucination_counts, color='magenta')
-        ax.set_xlabel('Object ID (truncated)')
-        ax.set_ylabel('Number of Hallucination Markings', color='magenta')
-        ax.tick_params(axis='y', labelcolor='magenta')
-        
-        # Add percentage labels
-        for i, bar in enumerate(bars):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                    f'{percentages[i]:.1f}%',
-                    ha='center', va='bottom', rotation=0, size=8)
-        
-        # Overall statistics
-        overall_percentage = (total_hallucinations / total_evaluations * 100) if total_evaluations > 0 else 0
-        plt.title(f'Objects with Most Hallucination Markings\nTotal Hallucinations: {total_hallucinations} ({overall_percentage:.1f}% of all evaluations)')
-        plt.xticks(rotation=45, ha='right')
-    else:
-        plt.text(0.5, 0.5, "No hallucinations found", ha='center', va='center', transform=ax.transAxes)
-        plt.title('Hallucinations Analysis')
-    
-    plt.tight_layout()
-    
-    # Save plot to BytesIO object
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    
-    # Return image
-    return StreamingResponse(buf, media_type="image/png")
-
-# 5. For objects with multiple ratings: Accuracy/completeness disagreement and histogram
-@app.get("/analytics/rating_disagreement")
-@handle_visualization_errors
-async def rating_disagreement(request: Request, admin_user: User = Depends(check_admin_access)):
-    """Analyze rating disagreement for objects with multiple ratings"""
-    
-    all_objects = await fetch_all_objects(request)
-    
-    # Filter for objects with multiple ratings
-    multi_rated_objects = [obj for obj in all_objects if len(obj.get("ratings", [])) > 1]
-    
-    # Calculate disagreement metrics
-    accuracy_diffs = []
-    completeness_diffs = []
-    accuracy_std_devs = []
-    completeness_std_devs = []
-    
-    # Count objects with disagreement
-    accuracy_disagreement_count = 0
-    completeness_disagreement_count = 0
-    total_multi_rated = len(multi_rated_objects)
-    
-    # Disagreement threshold (difference of 2 or more points is considered disagreement)
-    threshold = 2
-    
-    for obj in multi_rated_objects:
-        # Extract all ratings for this object
+        # Extract accuracy and completeness ratings
         accuracy_ratings = []
         completeness_ratings = []
         
-        for rating in obj.get("ratings", []):
-            metrics = rating.get("metrics", {})
-            if "accuracy" in metrics and metrics["accuracy"] is not None:
-                accuracy_ratings.append(metrics["accuracy"])
-            if "completeness" in metrics and metrics["completeness"] is not None:
-                completeness_ratings.append(metrics["completeness"])
+        for obj in all_objects:
+            avg_ratings = obj.get("averageRatings", {})
+            if "accuracy" in avg_ratings and avg_ratings["accuracy"] is not None:
+                accuracy_ratings.append(avg_ratings["accuracy"])
+            if "completeness" in avg_ratings and avg_ratings["completeness"] is not None:
+                completeness_ratings.append(avg_ratings["completeness"])
         
-        # Calculate max difference and standard deviation for each metric
-        if len(accuracy_ratings) > 1:
-            max_acc_diff = max(accuracy_ratings) - min(accuracy_ratings)
-            accuracy_diffs.append(max_acc_diff)
-            accuracy_std_devs.append(np.std(accuracy_ratings))
-            if max_acc_diff >= threshold:
-                accuracy_disagreement_count += 1
+        # Handle empty data case
+        if not accuracy_ratings and not completeness_ratings:
+            plt.figure(figsize=(15, 6))
+            plt.text(0.5, 0.5, "No rating data available", ha='center', va='center', transform=plt.gca().transAxes)
+            plt.tight_layout()
+            buf = BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close()
+            return StreamingResponse(buf, media_type="image/png")
         
-        if len(completeness_ratings) > 1:
-            max_comp_diff = max(completeness_ratings) - min(completeness_ratings)
-            completeness_diffs.append(max_comp_diff)
-            completeness_std_devs.append(np.std(completeness_ratings))
-            if max_comp_diff >= threshold:
-                completeness_disagreement_count += 1
-    
-    # Create figure with multiple subplots
-    fig = plt.figure(figsize=(15, 10))
-    
-    # Handle case with no data
-    if not multi_rated_objects:
-        plt.text(0.5, 0.5, "No objects with multiple ratings found", 
-                ha='center', va='center', transform=plt.gca().transAxes)
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Accuracy histogram
+        if accuracy_ratings:
+            ax1.hist(accuracy_ratings, bins=10, alpha=0.7, color='blue')
+            ax1.set_title('Distribution of Accuracy Ratings')
+            ax1.set_xlabel('Accuracy Rating')
+            ax1.set_ylabel('Count')
+        else:
+            ax1.text(0.5, 0.5, "No accuracy data available", ha='center', va='center', transform=ax1.transAxes)
+        
+        # Completeness histogram
+        if completeness_ratings:
+            ax2.hist(completeness_ratings, bins=10, alpha=0.7, color='green')
+            ax2.set_title('Distribution of Completeness Ratings')
+            ax2.set_xlabel('Completeness Rating')
+            ax2.set_ylabel('Count')
+        else:
+            ax2.text(0.5, 0.5, "No completeness data available", ha='center', va='center', transform=ax2.transAxes)
+        
         plt.tight_layout()
+        
+        # Save plot to BytesIO object
         buf = BytesIO()
         plt.savefig(buf, format='png')
         buf.seek(0)
         plt.close()
+        
+        # Return image
         return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error generating histogram: {e}")
+        error_buf = create_error_image(f"Error generating visualization: {str(e)}")
+        return StreamingResponse(error_buf, media_type="image/png")
+
+# 2. Updated time spent distribution endpoint
+@app.get("/analytics/distribution/time_spent")
+async def distribution_time_spent(request: Request):
+    """Generate distribution of time spent on evaluations"""
+    # Get admin user manually without dependency
+    admin_user = await get_viz_admin_user(request)
     
-    # 1. Disagreement rates
-    ax1 = fig.add_subplot(221)
-    labels = ['Accuracy', 'Completeness']
-    if total_multi_rated > 0:
-        rates = [
-            accuracy_disagreement_count / total_multi_rated * 100,
-            completeness_disagreement_count / total_multi_rated * 100
-        ]
-        ax1.bar(labels, rates, color=['blue', 'green'])
-        ax1.set_ylabel('Disagreement Rate (%)')
-        ax1.set_title(f'Rating Disagreement Rates\n(Threshold: {threshold} points difference)')
+    if not admin_user:
+        # Return error image instead of raising an exception
+        error_buf = create_error_image("Authentication required")
+        return StreamingResponse(error_buf, media_type="image/png")
+    
+    try:
+        # Original visualization code
+        all_objects = await fetch_all_objects(request)
         
-        # Add percentage labels
-        for i, rate in enumerate(rates):
-            ax1.text(i, rate + 1, f'{rate:.1f}%', ha='center')
-    else:
-        ax1.text(0.5, 0.5, "No multi-rated objects found", ha='center', va='center', transform=ax1.transAxes)
-    
-    # 2. Histogram of accuracy differences
-    ax2 = fig.add_subplot(222)
-    if accuracy_diffs:
-        bins = np.arange(0, max(accuracy_diffs) + 1.5) - 0.5
-        if len(bins) <= 1:  # Handle edge case with single value
-            bins = 3
-        ax2.hist(accuracy_diffs, bins=bins, alpha=0.7, color='blue')
-        ax2.set_title('Histogram of Max Accuracy Differences')
-        ax2.set_xlabel('Max Difference Between Ratings')
-        ax2.set_ylabel('Count')
-        ax2.axvline(x=threshold-0.5, color='red', linestyle='--', label=f'Threshold ({threshold})')
-        ax2.legend()
-    else:
-        ax2.text(0.5, 0.5, "No accuracy data available", ha='center', va='center', transform=ax2.transAxes)
-    
-    # 3. Histogram of completeness differences
-    ax3 = fig.add_subplot(223)
-    if completeness_diffs:
-        bins = np.arange(0, max(completeness_diffs) + 1.5) - 0.5
-        if len(bins) <= 1:  # Handle edge case with single value
-            bins = 3
-        ax3.hist(completeness_diffs, bins=bins, alpha=0.7, color='green')
-        ax3.set_title('Histogram of Max Completeness Differences')
-        ax3.set_xlabel('Max Difference Between Ratings')
-        ax3.set_ylabel('Count')
-        ax3.axvline(x=threshold-0.5, color='red', linestyle='--', label=f'Threshold ({threshold})')
-        ax3.legend()
-    else:
-        ax3.text(0.5, 0.5, "No completeness data available", ha='center', va='center', transform=ax3.transAxes)
-    
-    # 4. Standard deviation comparison
-    ax4 = fig.add_subplot(224)
-    if accuracy_std_devs and completeness_std_devs:
-        data = [accuracy_std_devs, completeness_std_devs]
-        ax4.boxplot(data, labels=['Accuracy', 'Completeness'])
-        ax4.set_title('Standard Deviation of Ratings')
-        ax4.set_ylabel('Standard Deviation')
+        # Extract time spent data
+        time_spent_values = []
         
-        # Add mean annotations
-        acc_mean = np.mean(accuracy_std_devs)
-        comp_mean = np.mean(completeness_std_devs)
-        ax4.text(1, acc_mean, f'Mean: {acc_mean:.2f}', ha='center', va='bottom')
-        ax4.text(2, comp_mean, f'Mean: {comp_mean:.2f}', ha='center', va='bottom')
-    else:
-        ax4.text(0.5, 0.5, "Insufficient data for standard deviation analysis", ha='center', va='center', transform=ax4.transAxes)
+        for obj in all_objects:
+            for rating in obj.get("ratings", []):
+                time_spent = rating.get("metrics", {}).get("time_spent_seconds")
+                if time_spent is not None:
+                    time_spent_values.append(time_spent)
+        
+        # Create plot
+        plt.figure(figsize=(10, 6))
+        
+        if time_spent_values:
+            plt.hist(time_spent_values, bins=20, alpha=0.7, color='purple')
+            plt.title('Distribution of Time Spent on Evaluations')
+            plt.xlabel('Time Spent (seconds)')
+            plt.ylabel('Count')
+            plt.grid(True, alpha=0.3)
+            
+            # Add statistics annotations
+            avg_time = np.mean(time_spent_values)
+            median_time = np.median(time_spent_values)
+            plt.axvline(avg_time, color='red', linestyle='dashed', linewidth=1)
+            plt.axvline(median_time, color='green', linestyle='dashed', linewidth=1)
+            plt.text(avg_time*1.05, plt.ylim()[1]*0.9, f'Mean: {avg_time:.1f}s', color='red')
+            plt.text(median_time*1.05, plt.ylim()[1]*0.8, f'Median: {median_time:.1f}s', color='green')
+        else:
+            plt.text(0.5, 0.5, "No time spent data available", ha='center', va='center', transform=plt.gca().transAxes)
+        
+        plt.tight_layout()
+        
+        # Save plot to BytesIO object
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        # Return image
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error generating time spent distribution: {e}")
+        error_buf = create_error_image(f"Error generating visualization: {str(e)}")
+        return StreamingResponse(error_buf, media_type="image/png")
+
+# 3. Updated unknown count endpoint
+@app.get("/analytics/unknown_count")
+async def unknown_count(request: Request):
+    """Generate visualization of unknown counts across objects"""
+    # Get admin user manually without dependency
+    admin_user = await get_viz_admin_user(request)
     
-    plt.tight_layout()
+    if not admin_user:
+        # Return error image instead of raising an exception
+        error_buf = create_error_image("Authentication required")
+        return StreamingResponse(error_buf, media_type="image/png")
     
-    # Save plot to BytesIO object
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
+    try:
+        # Original visualization code
+        all_objects = await fetch_all_objects(request)
+        
+        # Count objects with unknown markings
+        object_unknown_counts = {}
+        total_evaluations = 0
+        total_unknown = 0
+        
+        for obj in all_objects:
+            obj_id = obj.get("objectId", "unknown")
+            unknown_count = 0
+            eval_count = len(obj.get("ratings", []))
+            
+            for rating in obj.get("ratings", []):
+                if rating.get("metrics", {}).get("unknown_object", False):
+                    unknown_count += 1
+                    total_unknown += 1
+            
+            total_evaluations += eval_count
+            
+            if unknown_count > 0:
+                object_unknown_counts[obj_id] = {
+                    "unknown_count": unknown_count,
+                    "total_ratings": eval_count,
+                    "percentage": (unknown_count / eval_count * 100) if eval_count > 0 else 0
+                }
+        
+        # Sort by unknown count
+        sorted_objects = sorted(
+            object_unknown_counts.items(),
+            key=lambda x: x[1]["unknown_count"],
+            reverse=True
+        )[:20]  # Top 20 objects
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        if sorted_objects:
+            objects = [item[0][-6:] + "..." for item in sorted_objects]  # Truncate long object IDs
+            unknown_counts = [item[1]["unknown_count"] for item in sorted_objects]
+            percentages = [item[1]["percentage"] for item in sorted_objects]
+            
+            # Bar chart for counts
+            bars = ax.bar(objects, unknown_counts, color='orangered')
+            ax.set_xlabel('Object ID (truncated)')
+            ax.set_ylabel('Number of Unknown Markings', color='orangered')
+            ax.tick_params(axis='y', labelcolor='orangered')
+            
+            # Add percentage labels
+            for i, bar in enumerate(bars):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                        f'{percentages[i]:.1f}%',
+                        ha='center', va='bottom', rotation=0, size=8)
+            
+            # Overall statistics
+            overall_percentage = (total_unknown / total_evaluations * 100) if total_evaluations > 0 else 0
+            plt.title(f'Objects with Most Unknown Markings\nTotal Unknown: {total_unknown} ({overall_percentage:.1f}% of all evaluations)')
+            plt.xticks(rotation=45, ha='right')
+        else:
+            plt.text(0.5, 0.5, "No unknown objects found", ha='center', va='center', transform=ax.transAxes)
+            plt.title('Unknown Objects Analysis')
+        
+        plt.tight_layout()
+        
+        # Save plot to BytesIO object
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        # Return image
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error generating unknown count: {e}")
+        error_buf = create_error_image(f"Error generating visualization: {str(e)}")
+        return StreamingResponse(error_buf, media_type="image/png")
+
+# 4. Updated hallucination count endpoint
+@app.get("/analytics/hallucination_count")
+async def hallucination_count(request: Request):
+    """Generate visualization of hallucination counts across objects"""
+    # Get admin user manually without dependency
+    admin_user = await get_viz_admin_user(request)
     
-    # Return image
-    return StreamingResponse(buf, media_type="image/png")
+    if not admin_user:
+        # Return error image instead of raising an exception
+        error_buf = create_error_image("Authentication required")
+        return StreamingResponse(error_buf, media_type="image/png")
+    
+    try:
+        # Original visualization code
+        all_objects = await fetch_all_objects(request)
+        
+        # Count objects with hallucination markings
+        object_hallucination_counts = {}
+        total_evaluations = 0
+        total_hallucinations = 0
+        
+        for obj in all_objects:
+            obj_id = obj.get("objectId", "unknown")
+            hallucination_count = 0
+            eval_count = len(obj.get("ratings", []))
+            
+            for rating in obj.get("ratings", []):
+                if rating.get("metrics", {}).get("hallucinated", False):
+                    hallucination_count += 1
+                    total_hallucinations += 1
+            
+            total_evaluations += eval_count
+            
+            if hallucination_count > 0:
+                object_hallucination_counts[obj_id] = {
+                    "hallucination_count": hallucination_count,
+                    "total_ratings": eval_count,
+                    "percentage": (hallucination_count / eval_count * 100) if eval_count > 0 else 0
+                }
+        
+        # Sort by hallucination count
+        sorted_objects = sorted(
+            object_hallucination_counts.items(),
+            key=lambda x: x[1]["hallucination_count"],
+            reverse=True
+        )[:20]  # Top 20 objects
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        if sorted_objects:
+            objects = [item[0][-6:] + "..." for item in sorted_objects]  # Truncate long object IDs
+            hallucination_counts = [item[1]["hallucination_count"] for item in sorted_objects]
+            percentages = [item[1]["percentage"] for item in sorted_objects]
+            
+            # Bar chart for counts
+            bars = ax.bar(objects, hallucination_counts, color='magenta')
+            ax.set_xlabel('Object ID (truncated)')
+            ax.set_ylabel('Number of Hallucination Markings', color='magenta')
+            ax.tick_params(axis='y', labelcolor='magenta')
+            
+            # Add percentage labels
+            for i, bar in enumerate(bars):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                        f'{percentages[i]:.1f}%',
+                        ha='center', va='bottom', rotation=0, size=8)
+            
+            # Overall statistics
+            overall_percentage = (total_hallucinations / total_evaluations * 100) if total_evaluations > 0 else 0
+            plt.title(f'Objects with Most Hallucination Markings\nTotal Hallucinations: {total_hallucinations} ({overall_percentage:.1f}% of all evaluations)')
+            plt.xticks(rotation=45, ha='right')
+        else:
+            plt.text(0.5, 0.5, "No hallucinations found", ha='center', va='center', transform=ax.transAxes)
+            plt.title('Hallucinations Analysis')
+        
+        plt.tight_layout()
+        
+        # Save plot to BytesIO object
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        # Return image
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error generating hallucination count: {e}")
+        error_buf = create_error_image(f"Error generating visualization: {str(e)}")
+        return StreamingResponse(error_buf, media_type="image/png")
+
+# 5. Updated rating disagreement endpoint
+@app.get("/analytics/rating_disagreement")
+async def rating_disagreement(request: Request):
+    """Analyze rating disagreement for objects with multiple ratings"""
+    # Get admin user manually without dependency
+    admin_user = await get_viz_admin_user(request)
+    
+    if not admin_user:
+        # Return error image instead of raising an exception
+        error_buf = create_error_image("Authentication required")
+        return StreamingResponse(error_buf, media_type="image/png")
+    
+    try:
+        # Original visualization code
+        all_objects = await fetch_all_objects(request)
+        
+        # Filter for objects with multiple ratings
+        multi_rated_objects = [obj for obj in all_objects if len(obj.get("ratings", [])) > 1]
+        
+        # Calculate disagreement metrics
+        accuracy_diffs = []
+        completeness_diffs = []
+        accuracy_std_devs = []
+        completeness_std_devs = []
+        
+        # Count objects with disagreement
+        accuracy_disagreement_count = 0
+        completeness_disagreement_count = 0
+        total_multi_rated = len(multi_rated_objects)
+        
+        # Disagreement threshold (difference of 2 or more points is considered disagreement)
+        threshold = 2
+        
+        for obj in multi_rated_objects:
+            # Extract all ratings for this object
+            accuracy_ratings = []
+            completeness_ratings = []
+            
+            for rating in obj.get("ratings", []):
+                metrics = rating.get("metrics", {})
+                if "accuracy" in metrics and metrics["accuracy"] is not None:
+                    accuracy_ratings.append(metrics["accuracy"])
+                if "completeness" in metrics and metrics["completeness"] is not None:
+                    completeness_ratings.append(metrics["completeness"])
+            
+            # Calculate max difference and standard deviation for each metric
+            if len(accuracy_ratings) > 1:
+                max_acc_diff = max(accuracy_ratings) - min(accuracy_ratings)
+                accuracy_diffs.append(max_acc_diff)
+                accuracy_std_devs.append(np.std(accuracy_ratings))
+                if max_acc_diff >= threshold:
+                    accuracy_disagreement_count += 1
+            
+            if len(completeness_ratings) > 1:
+                max_comp_diff = max(completeness_ratings) - min(completeness_ratings)
+                completeness_diffs.append(max_comp_diff)
+                completeness_std_devs.append(np.std(completeness_ratings))
+                if max_comp_diff >= threshold:
+                    completeness_disagreement_count += 1
+        
+        # Create figure with multiple subplots
+        fig = plt.figure(figsize=(15, 10))
+        
+        # Handle case with no data
+        if not multi_rated_objects:
+            plt.text(0.5, 0.5, "No objects with multiple ratings found", 
+                    ha='center', va='center', transform=plt.gca().transAxes)
+            plt.tight_layout()
+            buf = BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close()
+            return StreamingResponse(buf, media_type="image/png")
+        
+        # 1. Disagreement rates
+        ax1 = fig.add_subplot(221)
+        labels = ['Accuracy', 'Completeness']
+        if total_multi_rated > 0:
+            rates = [
+                accuracy_disagreement_count / total_multi_rated * 100,
+                completeness_disagreement_count / total_multi_rated * 100
+            ]
+            ax1.bar(labels, rates, color=['blue', 'green'])
+            ax1.set_ylabel('Disagreement Rate (%)')
+            ax1.set_title(f'Rating Disagreement Rates\n(Threshold: {threshold} points difference)')
+            
+            # Add percentage labels
+            for i, rate in enumerate(rates):
+                ax1.text(i, rate + 1, f'{rate:.1f}%', ha='center')
+        else:
+            ax1.text(0.5, 0.5, "No multi-rated objects found", ha='center', va='center', transform=ax1.transAxes)
+        
+        # 2. Histogram of accuracy differences
+        ax2 = fig.add_subplot(222)
+        if accuracy_diffs:
+            bins = np.arange(0, max(accuracy_diffs) + 1.5) - 0.5
+            if len(bins) <= 1:  # Handle edge case with single value
+                bins = 3
+            ax2.hist(accuracy_diffs, bins=bins, alpha=0.7, color='blue')
+            ax2.set_title('Histogram of Max Accuracy Differences')
+            ax2.set_xlabel('Max Difference Between Ratings')
+            ax2.set_ylabel('Count')
+            ax2.axvline(x=threshold-0.5, color='red', linestyle='--', label=f'Threshold ({threshold})')
+            ax2.legend()
+        else:
+            ax2.text(0.5, 0.5, "No accuracy data available", ha='center', va='center', transform=ax2.transAxes)
+        
+        # 3. Histogram of completeness differences
+        ax3 = fig.add_subplot(223)
+        if completeness_diffs:
+            bins = np.arange(0, max(completeness_diffs) + 1.5) - 0.5
+            if len(bins) <= 1:  # Handle edge case with single value
+                bins = 3
+            ax3.hist(completeness_diffs, bins=bins, alpha=0.7, color='green')
+            ax3.set_title('Histogram of Max Completeness Differences')
+            ax3.set_xlabel('Max Difference Between Ratings')
+            ax3.set_ylabel('Count')
+            ax3.axvline(x=threshold-0.5, color='red', linestyle='--', label=f'Threshold ({threshold})')
+            ax3.legend()
+        else:
+            ax3.text(0.5, 0.5, "No completeness data available", ha='center', va='center', transform=ax3.transAxes)
+        
+        # 4. Standard deviation comparison
+        ax4 = fig.add_subplot(224)
+        if accuracy_std_devs and completeness_std_devs:
+            data = [accuracy_std_devs, completeness_std_devs]
+            ax4.boxplot(data, labels=['Accuracy', 'Completeness'])
+            ax4.set_title('Standard Deviation of Ratings')
+            ax4.set_ylabel('Standard Deviation')
+            
+            # Add mean annotations
+            acc_mean = np.mean(accuracy_std_devs)
+            comp_mean = np.mean(completeness_std_devs)
+            ax4.text(1, acc_mean, f'Mean: {acc_mean:.2f}', ha='center', va='bottom')
+            ax4.text(2, comp_mean, f'Mean: {comp_mean:.2f}', ha='center', va='bottom')
+        else:
+            ax4.text(0.5, 0.5, "Insufficient data for standard deviation analysis", ha='center', va='center', transform=ax4.transAxes)
+        
+        plt.tight_layout()
+        
+        # Save plot to BytesIO object
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        # Return image
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error generating rating disagreement: {e}")
+        error_buf = create_error_image(f"Error generating visualization: {str(e)}")
+        return StreamingResponse(error_buf, media_type="image/png")
+    
 
 # Update analytics dashboard to redirect to login if not authenticated
 @app.get("/analytics/dashboard", response_class=HTMLResponse)
