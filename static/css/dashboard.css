@@ -1,0 +1,82 @@
+body {
+    min-height: 100vh;
+    background-color: #f5f7fa;
+}
+.nav-link {
+    color: rgba(255, 255, 255, 0.85);
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 0.25rem;
+}
+.nav-link:hover, .nav-link.active {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+.nav-link i {
+    width: 1.25rem;
+    text-align: center;
+    margin-right: 0.5rem;
+}
+.sidebar {
+    background-color: #1e3a8a;
+    min-width: 250px;
+}
+.logo {
+    max-width: 180px;
+}
+.card {
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    border: none;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+.stats-card {
+    border-left: 4px solid #3b82f6;
+}
+.viz-card {
+    height: 100%;
+}
+.badge-important {
+    background-color: #f59e0b;
+    color: white;
+}
+.badge-good {
+    background-color: #10b981;
+    color: white;
+}
+.btn-primary {
+    background-color: #2563eb;
+    border-color: #2563eb;
+}
+.btn-primary:hover {
+    background-color: #1e40af;
+    border-color: #1e40af;
+}
+.chart-container {
+    height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.chart-container img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+.refresh-btn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}

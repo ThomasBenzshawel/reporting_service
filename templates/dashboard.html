@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/dashboard.css') }}">
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row flex-nowrap">
+            <!-- Sidebar -->
+            <div class="sidebar col-auto d-flex flex-column flex-shrink-0 p-3 text-white">
+                <a href="/" class="d-flex align-items-center mb-md-0 me-md-auto text-white text-decoration-none">
+                    <span class="fs-4"><i class="bi bi-bar-chart-fill me-2"></i> Analytics</span>
+                </a>
+                <hr>
+                <ul class="nav nav-pills flex-column mb-auto">
+                    <li class="nav-item">
+                        <a href="/" class="nav-link text-white">
+                            <i class="bi bi-house-door"></i>
+                            Dashboard
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/assignments" class="nav-link text-white">
+                            <i class="bi bi-list-check"></i>
+                            My Assignments
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/completed" class="nav-link text-white">
+                            <i class="bi bi-check2-circle"></i>
+                            Completed
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/profile" class="nav-link text-white">
+                            <i class="bi bi-person"></i>
+                            Profile
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/analytics/dashboard" class="nav-link active" aria-current="page">
+                            <i class="bi bi-graph-up"></i>
+                            Analytics
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/admin" class="nav-link text-white">
+                            <i class="bi bi-gear"></i>
+                            Admin Panel
+                        </a>
+                    </li>
+                </ul>
+                <hr>
+                <div class="dropdown">
+                    <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle" id="dropdownUser1" data-bs-toggle="dropdown" aria-expanded="false">
+                        <img src="https://api.dicebear.com/7.x/initials/svg?seed={{ user_email }}" alt="User" width="32" height="32" class="rounded-circle me-2">
+                        <strong>{{ user_email }}</strong>
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-dark text-small shadow" aria-labelledby="dropdownUser1">
+                        <li><a class="dropdown-item" href="/profile">Profile</a></li>
+                        <li><a class="dropdown-item" href="/admin">Admin Panel</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="/logout">Sign out</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Main content -->
+            <div class="col py-3">
+                <div class="container">
+                    <!-- Header -->
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-4 border-bottom">
+                        <h1 class="h2">Analytics Dashboard</h1>
+                        <div class="btn-toolbar mb-2 mb-md-0">
+                            <span class="badge bg-primary py-2 px-3">Admin Access</span>
+                            <button class="btn btn-sm btn-outline-secondary ms-2 refresh-btn" onclick="refreshImages()">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Data
+                            </button>
+                            <div class="dropdown ms-2">
+                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-download"></i> Export
+                                </button>
+                                <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+                                    <li><a class="dropdown-item" href="/analytics/export/users_csv">Export Users Data</a></li>
+                                    <li><a class="dropdown-item" href="/analytics/export/objects_csv">Export Objects Data</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Statistics -->
+                    <div class="row mb-4">
+                        <div class="col-md-3 mb-4 mb-md-0">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="card-subtitle mb-2 text-muted">Total Objects</h6>
+                                            <h2 class="card-title mb-0" id="total-objects">--</h2>
+                                        </div>
+                                        <div class="fs-1 text-primary">
+                                            <i class="bi bi-box"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-4 mb-md-0">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="card-subtitle mb-2 text-muted">Total Evaluations</h6>
+                                            <h2 class="card-title mb-0" id="total-evaluations">--</h2>
+                                        </div>
+                                        <div class="fs-1 text-primary">
+                                            <i class="bi bi-clipboard-check"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-4 mb-md-0">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="card-subtitle mb-2 text-muted">Unknown Objects</h6>
+                                            <h2 class="card-title mb-0" id="unknown-objects">--</h2>
+                                        </div>
+                                        <div class="fs-1 text-primary">
+                                            <i class="bi bi-question-circle"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stats-card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="card-subtitle mb-2 text-muted">Hallucinations</h6>
+                                            <h2 class="card-title mb-0" id="hallucinations">--</h2>
+                                        </div>
+                                        <div class="fs-1 text-primary">
+                                            <i class="bi bi-exclamation-triangle"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visualizations -->
+                    <div class="row mb-4">
+                        <!-- Rating Histograms -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card viz-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">Rating Distributions</h5>
+                                    <a href="/analytics/histogram/ratings" download="ratings_histogram.png" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <img src="/analytics/histogram/ratings" alt="Rating Histograms" id="ratings-img">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Time Spent Distribution -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card viz-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">Evaluation Time Distribution</h5>
+                                    <a href="/analytics/distribution/time_spent" download="time_spent.png" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <img src="/analytics/distribution/time_spent" alt="Time Spent Distribution" id="time-img">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Unknown Objects Analysis -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card viz-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">Unknown Objects Analysis</h5>
+                                    <a href="/analytics/unknown_count" download="unknown_count.png" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <img src="/analytics/unknown_count" alt="Unknown Object Analysis" id="unknown-img">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Hallucination Analysis -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card viz-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">Hallucination Analysis</h5>
+                                    <a href="/analytics/hallucination_count" download="hallucination_count.png" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <img src="/analytics/hallucination_count" alt="Hallucination Analysis" id="hallucination-img">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Rating Disagreement Analysis -->
+                        <div class="col-md-12">
+                            <div class="card viz-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="card-title mb-0">Rating Disagreement Analysis</h5>
+                                    <a href="/analytics/rating_disagreement" download="rating_disagreement.png" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <img src="/analytics/rating_disagreement" alt="Rating Disagreement Analysis" id="disagreement-img">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', path='/js/dashboard.js') }}"></script>
+</body>
+</html>
