@@ -21,7 +21,31 @@ This service provides analytics and visualizations for the objaverse validation 
 - **GET /analytics/export/users_csv**: Export user statistics to CSV
 - **GET /analytics/export/objects_csv**: Export object statistics to CSV
 
+## Deployment
+
+### Environment Variables
+
+Set the environment vars in your .env
+
+- `API_URL`: URL of your main API service (default: "http://api-service:8000")
+- `AUTH_URL`: URL of your auth service (default: "http://auth-service:8000")
+
+### Using Docker
+Build and run the service using Docker:
+
+```bash
+# Build the Docker image
+docker build -t evaluation-analytics .
+
+# Run the container
+docker run -p 8000:8000 evaluation-analytics
+```
+
 ## Using the Service
+
+For all links that are "http://analytics-service:8000", instead use the url that you have this service deployed on.
+
+If it is a local deployment, go to "http://127.0.0.1:8000/", depending on how you deploy it on the cloud, you will have different urls!
 
 ### Authentication
 
@@ -80,30 +104,4 @@ curl -X GET "http://analytics-service:8000/analytics/histogram/ratings" \
   -d "username=your_email@example.com&password=your_password" \
   -H "Content-Type: application/x-www-form-urlencoded" | jq -r '.access_token')" \
   -o ratings_histogram.png
-```
-
-Access the dashboard by navigating to:
-
-```
-http://analytics-service:8000/analytics/dashboard
-```
-## Deployment
-
-### Environment Variables
-
-Set the following environment variables:
-
-- `API_URL`: URL of your main API service (default: "http://api-service:8000")
-- `AUTH_URL`: URL of your auth service (default: "http://auth-service:8000")
-
-### Using Docker
-
-Build and run the service using Docker:
-
-```bash
-# Build the Docker image
-docker build -t evaluation-analytics .
-
-# Run the container
-docker run -p 8000:8000 evaluation-analytics
 ```
