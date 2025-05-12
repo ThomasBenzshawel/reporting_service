@@ -53,10 +53,9 @@ static_dir = os.path.join(base_dir, "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
-# OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Models
+# Pydantic Models
 class User(BaseModel):
     userId: str
     email: str
@@ -84,7 +83,7 @@ async def get_token(username: str, password: str) -> Optional[str]:
             logger.error(f"Error getting token: {e}")
             return None
 
-# Auth dependency that supports both session tokens and authorization headers
+# Auth dependency that supports both session tokens and authorization headers (since we do both cli and web app)
 async def get_current_user(request: Request, authorization: Optional[str] = Header(None)):
     # Get token from session
     token = request.session.get("access_token")
@@ -130,6 +129,7 @@ async def check_admin_access(user: Optional[User] = Depends(get_current_user)):
     
     return user
 
+# helper function to fetch all objects with pagination
 async def fetch_all_objects(request: Request, authorization: Optional[str] = Header(None)) -> List[Dict[str, Any]]:
     """Fetch all objects from the API with pagination"""
     all_objects = []
@@ -243,7 +243,7 @@ def create_error_image(error_text):
     plt.close()
     return StreamingResponse(buf, media_type="image/png")
 
-
+# routes
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, user: Optional[User] = Depends(get_current_user)):
     if user:
@@ -290,7 +290,7 @@ async def logout(request: Request):
     
     return RedirectResponse(url="/login")
 
-
+# does the visualization endpoints
 async def get_viz_admin_user(request: Request):
     """Special authentication for visualization endpoints that bypasses dependency validation"""
     # Get token from session
@@ -320,6 +320,7 @@ async def get_viz_admin_user(request: Request):
         logger.error(f"Error verifying user for visualization: {str(e)}")
         return None
 
+# if a service is down, create an error image
 def create_error_image(error_message):
     """Create an error image with the specified message"""
     plt.figure(figsize=(10, 6))
@@ -334,7 +335,7 @@ def create_error_image(error_message):
     
     return buf
 
-# 1. Updated histogram ratings endpoint
+# Histogram ratings endpoint
 @app.get("/analytics/histogram/ratings")
 async def histogram_ratings(request: Request):
     """Generate histograms for accuracy and completeness ratings"""
@@ -408,7 +409,7 @@ async def histogram_ratings(request: Request):
         error_buf = create_error_image(f"Error generating visualization: {str(e)}")
         return StreamingResponse(error_buf, media_type="image/png")
 
-# 2. Updated time spent distribution endpoint
+# Time spent distribution endpoint
 @app.get("/analytics/distribution/time_spent")
 async def distribution_time_spent(request: Request):
     """Generate distribution of time spent on evaluations"""
@@ -468,7 +469,7 @@ async def distribution_time_spent(request: Request):
         error_buf = create_error_image(f"Error generating visualization: {str(e)}")
         return StreamingResponse(error_buf, media_type="image/png")
 
-# 3. Updated unknown count endpoint
+# Unknown count endpoint
 @app.get("/analytics/unknown_count")
 async def unknown_count(request: Request):
     """Generate visualization of unknown counts across objects"""
@@ -559,7 +560,7 @@ async def unknown_count(request: Request):
         error_buf = create_error_image(f"Error generating visualization: {str(e)}")
         return StreamingResponse(error_buf, media_type="image/png")
 
-# 4. Updated hallucination count endpoint
+# Hallucination count endpoint
 @app.get("/analytics/hallucination_count")
 async def hallucination_count(request: Request):
     """Generate visualization of hallucination counts across objects"""
@@ -650,7 +651,7 @@ async def hallucination_count(request: Request):
         error_buf = create_error_image(f"Error generating visualization: {str(e)}")
         return StreamingResponse(error_buf, media_type="image/png")
 
-# 5. Updated rating disagreement endpoint
+# Updated rating disagreement endpoint
 @app.get("/analytics/rating_disagreement")
 async def rating_disagreement(request: Request):
     """Analyze rating disagreement for objects with multiple ratings"""
@@ -1047,7 +1048,7 @@ async def export_objects_csv(request: Request, admin_user: User = Depends(check_
    
     return response
 
-# Token endpoint for curl authentication
+# Token endpoint for curl authentication (for the cli client)
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     """
@@ -1093,7 +1094,7 @@ async def root(request: Request, user: Optional[User] = Depends(get_current_user
         return RedirectResponse(url="/login")
     return RedirectResponse(url="/analytics/dashboard")
 
-# Add a data endpoint to provide summary statistics
+# Data endpoint to provide summary statistics
 @app.get("/analytics/data")
 async def analytics_data(request: Request, admin_user: User = Depends(check_admin_access)):
     """Provide summary statistics for the dashboard"""
@@ -1122,7 +1123,7 @@ async def analytics_data(request: Request, admin_user: User = Depends(check_admi
         "hallucinations": hallucinations
     }
 
-# Add an endpoint for health checks
+# Endpoint for health checks for deployment
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -1149,4 +1150,4 @@ async def forbidden_handler(request: Request, exc: HTTPException):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", workers=3)
